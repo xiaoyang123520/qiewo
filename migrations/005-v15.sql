@@ -1,0 +1,3 @@
+-- v1.5: 浏览量 + 编辑时间
+ALTER TABLE threads ADD COLUMN views INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE posts ADD COLUMN updated_at INTEGER;
