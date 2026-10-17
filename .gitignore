@@ -1,3 +1,6 @@
+node_modules/
+dist/
+.wrangler/
+backups/
 __pycache__/
 *.pyc
-config.json
