@@ -221,6 +221,12 @@ export default {
     const path = url.pathname;
     const method = req.method.toUpperCase();
 
+    // ---------- robots.txt ----------
+    if (path === '/robots.txt' && method === 'GET') {
+      const origin = new URL(req.url).origin;
+      const txt = `User-agent: *\nAllow: /\nDisallow: /api/\nCrawl-delay: 5\nSitemap: ${origin}/sitemap.xml\n`;
+      return new Response(txt, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    }
     // ---------- sitemap ----------
     if (path === '/sitemap.xml' && method === 'GET') {
       const origin = new URL(req.url).origin;
