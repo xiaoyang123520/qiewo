@@ -11,7 +11,6 @@ function json(data, status = 200, extraHeaders = {}) {
 // 搜索引擎放行（但禁 /api/ 与管理后台）；社交预览放行（分享卡片需要）
 function botGuard(req, path) {
   const ua = req.headers.get('User-Agent') || '';
-  const ual = ua.toLowerCase();
   const block = (reason) => new Response('Forbidden', { status: 403, headers: { ...SEC_HEADERS } });
 
   // 空 UA：只拦 API，页面放行（防误伤 UA 被剥离的正常浏览器）
@@ -1559,6 +1558,7 @@ export default {
         results.forEach(r => { s[r.key] = r.value; });
         if (env.TURNSTILE_SITE_KEY || env.TURNSTILE_SITEKEY) s.turnstile_sitekey = env.TURNSTILE_SITE_KEY || env.TURNSTILE_SITEKEY;
         else s.turnstile_sitekey = '0x4AAAAAAFYe5ta84R_bZXQ9'; // 公开 sitekey，直接内置防变量丢失
+        s.github_oauth = env.GITHUB_CLIENT_ID ? 1 : 0;
         return json({ settings: s });
       }
       if (seg[0] === 'admin' && seg[1] === 'settings' && method === 'PUT') {
