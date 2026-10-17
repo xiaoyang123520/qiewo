@@ -1,0 +1,2 @@
+-- 主题锁定
+ALTER TABLE threads ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 0;
