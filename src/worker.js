@@ -102,7 +102,7 @@ async function checkSensitive(env, text) {
 async function sendVerificationEmail(env, email, name, token, origin) {
   const apiKey = env.RESEND_API_KEY;
   if (!apiKey) return { sent: false, reason: 'no-key' };
-  const from = env.FROM_EMAIL || 'noreply@email.lblb.eu';
+  const from = env.FROM_EMAIL || 'noreply@example.com';
   const link = origin + '/verify?token=' + token;
   try {
     const r = await fetch('https://api.resend.com/emails', {
@@ -267,7 +267,7 @@ export default {
           await env.DB.prepare('INSERT INTO password_resets (token, user_id, created_at, expires_at) VALUES (?,?,?,?)')
             .bind(token, u.id, Date.now(), Date.now() + 3600 * 1000).run();
           const link = new URL(req.url).origin + '/reset?token=' + token;
-          const from = env.FROM_EMAIL || 'noreply@email.lblb.eu';
+          const from = env.FROM_EMAIL || 'noreply@example.com';
           try {
             await fetch('https://api.resend.com/emails', {
               method: 'POST',
