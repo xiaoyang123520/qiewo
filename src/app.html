@@ -177,6 +177,7 @@ textarea{min-height:100px;resize:vertical}
 .solution-badge{display:inline-block;font-size:11px;color:#fff;background:var(--primary);border-radius:4px;padding:1px 6px;margin-left:4px;font-weight:700}
 .floor-badge{font-size:11px;background:var(--bg);border-radius:6px;padding:1px 6px;color:var(--muted)}
 </style>
+<link rel="alternate" type="application/rss+xml" title="企鹅窝" href="/rss">
 </head>
 <body>
 <header>
@@ -451,6 +452,15 @@ function renderContent(s){
   h = h.replace(/\{\{HIDE\}\}/g, '<div class="hide-lock">🔒 此处内容回复后可见</div>');
   h = h.replace(/\{\{LEVEL:(\d+)\}\}/g, '<div class="hide-lock">🔒 需要 $1 积分可见（发帖回帖可攒积分）</div>');
   h = h.replace(/\{\{ADMIN\}\}/g, '<div class="hide-lock">🔒 仅管理员可见</div>');
+  // 裸 URL 自动转可点击链接（最后处理，避免破坏已生成的标签属性）
+  h = h.replace(/(^|[\s>（(\[{「『一-鿿])(https?:\/\/[^\s<>"'\]）】」』，。！？；：一-鿿]+)/g, function(m, pre, url){
+    let trail = '';
+    while (url.length && /[.,!?;:]/.test(url.slice(-1))) { trail = url.slice(-1) + trail; url = url.slice(0, -1); }
+    // 右括号：只有多余（不成对）时才剥掉，保留 wikipedia 式 URL 里的括号
+    while (url.slice(-1) === ')' && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) { trail = ')' + trail; url = url.slice(0, -1); }
+    if (!url) return m;
+    return pre + '<a href="' + url + '" target="_blank" rel="noopener">' + url + '</a>' + trail;
+  });
   return h;
 }
 /* 编辑器工具栏 */
@@ -461,6 +471,7 @@ function editorToolbar(targetId){
     '<button type="button" onclick="edWrap(\''+targetId+'\',\'`\',\'`\')" title="代码">`</button>'+
     '<button type="button" onclick="toggleEmojiPicker(\''+targetId+'\',this)" title="表情">😀</button>'+
     '<button type="button" onclick="insertImageLink(\''+targetId+'\')" title="插入图片">🖼️</button>'+
+    '<button type="button" onclick="insertLink(\''+targetId+'\')" title="插入链接">🔗</button>'+
     '<button type="button" onclick="edInsert(\''+targetId+'\',\'@\')" title="@提醒">@</button>'+
     '<button type="button" onclick="edQuote(\''+targetId+'\')" title="引用">❝</button>'+
     '<button type="button" onclick="edWrap(\''+targetId+'\',\'[hide]\',\'[/hide]\')" title="回复可见">🔒</button>'+
@@ -552,6 +563,11 @@ function insertImageLink(targetId){
   const box = document.getElementById(targetId);
   box.value += '\n![](' + url.trim() + ')\n';
   box.focus();
+}
+function insertLink(targetId){
+  const url = prompt('粘贴链接（https://…）：');
+  if(!url || !/^https?:\/\//.test(url.trim())) return;
+  edInsert(targetId, url.trim() + ' ');
 }
 /* 图片灯箱 */
 let lbImages = [], lbIndex = 0;
@@ -706,6 +722,10 @@ function showLogin(){
     '<input type="password" id="m-pass" placeholder="密码" autocomplete="current-password">'+
     turnstileDiv()+
     '<div class="row"><button class="btn ghost" onclick="hideModal()">取消</button><button class="btn" onclick="doLogin()">登录</button></div>'+
+    '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
+    '<button class="btn ghost" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px" onclick="location.href=\'/api/auth/github\'">'+
+    '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'+
+    '使用 GitHub 登录</button>'+
     '<div style="text-align:center;margin-top:10px"><a style="font-size:13px;color:var(--primary);cursor:pointer" onclick="showForgot()">忘记密码？</a></div>');
   renderTurnstile('ts-widget');
 }
@@ -736,7 +756,11 @@ function showRegister(){
     '<input type="password" id="m-pass" placeholder="密码（4位以上）" autocomplete="new-password">'+
     turnstileDiv()+
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">注册即表示同意<a style="color:var(--primary);cursor:pointer" onclick="hideModal();navigate(\'/rules\')">《社区规范》</a></div>'+
-    '<div class="row"><button class="btn ghost" onclick="hideModal()">取消</button><button class="btn" onclick="doRegister()">注册</button></div>');
+    '<div class="row"><button class="btn ghost" onclick="hideModal()">取消</button><button class="btn" onclick="doRegister()">注册</button></div>'+
+    '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
+    '<button class="btn ghost" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px" onclick="location.href=\'/api/auth/github\'">'+
+    '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'+
+    '使用 GitHub 一键注册</button>');
   renderTurnstile('ts-widget');
 }
 async function doRegister(){
@@ -819,7 +843,7 @@ async function viewSearch(q){
   if(!j.results.length) html += '<div class="hint">没有找到相关主题，换个关键词试试</div>';
   j.results.forEach(t=>{
     html += '<div class="thread" onclick="navigate(\'/t/'+t.id+'\')">'+
-      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+esc(t.title)+'</div>'+
+      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+(t.is_locked?'<span class="pin" style="color:#6b7280;border-color:#6b7280">🔒</span>':'')+esc(t.title)+'</div>'+
       '<div class="mt"><span style="cursor:pointer;color:var(--primary)" onclick="event.stopPropagation();navigate(\'/u/'+t.user_id+'\')">'+esc(t.author)+'</span><span>'+esc(t.board_name)+'</span><span>'+t.reply_count+' 回复</span><span>'+timeAgo(t.updated_at)+'</span></div></div>';
   });
   html += '</div>';
@@ -873,6 +897,8 @@ async function viewSettings(){
     '<div class="setrow"><label>原密码</label><input type="password" id="s-oldpass"></div>'+
     '<div class="setrow"><label>新密码（4-64 位）</label><input type="password" id="s-newpass"></div>'+
     '<button class="btn" onclick="changePassword()">修改密码</button></div>';
+  html += '<div class="card"><h2 class="tt" style="font-size:16px">第三方登录</h2><div id="oauth-bindings"><div style="color:var(--muted);font-size:13px">加载中…</div></div></div>';
+  loadOauthBindings();
   html += '<div class="card"><h2 class="tt" style="font-size:16px">更换邮箱</h2><div class="err" id="em-err"></div>'+
     '<div style="font-size:13px;color:var(--muted);margin-bottom:8px">当前：'+esc(me.email||'')+(me.verified?'（已验证）':'（未验证）')+'</div>'+
     '<div class="setrow"><label>新邮箱（更换后需重新验证）</label><input type="text" id="s-email" placeholder="new@example.com"></div>'+
@@ -896,6 +922,30 @@ async function changePassword(){
     document.getElementById('s-oldpass').value = '';
     document.getElementById('s-newpass').value = '';
   }catch(e){ document.getElementById('pw-err').textContent = e.message; }
+}
+async function loadOauthBindings(){
+  const box = document.getElementById('oauth-bindings');
+  if(!box) return;
+  try{
+    const j = await api('/api/oauth/bindings');
+    let h = '';
+    const gh = (j.bindings||[]).find(b=>b.provider==='github');
+    if(gh){
+      h += '<div style="display:flex;align-items:center;gap:10px;padding:8px 0">'
+        + '<span style="font-size:14px">🐙 GitHub 已绑定</span>'
+        + '<span style="font-size:12px;color:var(--muted)">'+new Date(gh.created_at).toLocaleDateString()+'</span>'
+        + '<button class="btn ghost" style="width:auto;padding:4px 12px;font-size:12px" onclick="unbindOauth(\'github\')">解绑</button></div>';
+    }else if(j.githubConfigured){
+      h += '<div style="padding:8px 0"><button class="btn ghost" style="width:auto" onclick="location.href=\'/api/auth/github\'">🐙 绑定 GitHub</button></div>';
+    }
+    if(!h) h = '<div style="color:var(--muted);font-size:13px">暂无可用的第三方登录</div>';
+    box.innerHTML = h;
+  }catch(e){ box.innerHTML = '<div style="color:var(--muted);font-size:13px">加载失败</div>'; }
+}
+async function unbindOauth(provider){
+  if(!confirm('确定解绑 '+provider+' 吗？')) return;
+  try{ await api('/api/oauth/unbind',{method:'POST',body:JSON.stringify({provider})}); loadOauthBindings(); }
+  catch(e){ alert(e.message); }
 }
 async function changeEmail(){
   const email = document.getElementById('s-email').value.trim();
@@ -921,7 +971,7 @@ async function viewFavorites(){
   if(!j.favorites.length) html += '<div class="hint">还没有收藏任何主题</div>';
   j.favorites.forEach(t=>{
     html += '<div class="thread" onclick="navigate(\'/t/'+t.id+'\')">'+
-      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+esc(t.title)+'</div>'+
+      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+(t.is_locked?'<span class="pin" style="color:#6b7280;border-color:#6b7280">🔒</span>':'')+esc(t.title)+'</div>'+
       '<div class="mt"><span>'+esc(t.author)+'</span><span>'+esc(t.board_name)+'</span><span>'+t.reply_count+' 回复</span><span>'+timeAgo(t.updated_at)+'</span></div></div>';
   });
   html += '</div>';
@@ -1965,7 +2015,7 @@ async function viewProfile(uid){
   if(!j.threads.length) html += '<div class="hint">还没有发过主题</div>';
   j.threads.forEach(t=>{
     html += '<div class="thread" onclick="navigate(\'/t/'+t.id+'\')">'+
-      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+esc(t.title)+'</div>'+
+      '<div class="ti">'+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+(t.is_locked?'<span class="pin" style="color:#6b7280;border-color:#6b7280">🔒</span>':'')+esc(t.title)+'</div>'+
       '<div class="mt"><span>'+esc(t.board_name)+'</span><span>'+t.reply_count+' 回复</span><span>'+timeAgo(t.updated_at)+'</span></div></div>';
   });
   html += '</div>';
@@ -2035,7 +2085,7 @@ async function viewBoards(){
     html += '<div class="card"><h2 class="tt" style="font-size:16px;margin-bottom:4px">🔥 最新主题</h2>';
     lj.threads.slice(0, 10).forEach(t=>{
       html += '<div class="thread" onclick="navigate(\'/t/'+t.id+'\')">'+
-        '<div class="ti">'+(t.pinned?'<span class="pin">置顶</span>':'')+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+esc(t.title)+'</div>'+
+        '<div class="ti">'+(t.pinned?'<span class="pin">置顶</span>':'')+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+(t.is_locked?'<span class="pin" style="color:#6b7280;border-color:#6b7280">🔒</span>':'')+esc(t.title)+'</div>'+
         '<div class="mt"><span style="cursor:pointer;color:var(--primary)" onclick="event.stopPropagation();navigate(\'/u/'+t.user_id+'\')">'+esc(t.author)+'</span>'+
         '<span>'+esc(t.board_name)+'</span><span>'+t.reply_count+' 回复</span>'+
         (t.last_reply_by && t.last_reply_by !== t.author ? '<span>最后回复 '+esc(t.last_reply_by)+'</span>' : '')+
@@ -2079,7 +2129,7 @@ async function viewThreads(bid, page){
   if(!j.threads.length) html += '<div class="hint">还没有主题，来发第一帖吧</div>';
   j.threads.forEach((t,i)=>{
     html += '<div class="thread" onclick="navigate(\'/t/'+t.id+'\')">'+
-      '<div class="ti">'+(t.pinned?'<span class="pin">置顶</span>':'')+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+esc(t.title)+'</div>'+
+      '<div class="ti">'+(t.pinned?'<span class="pin">置顶</span>':'')+(t.is_digest?'<span class="pin" style="color:#d97706;border-color:#d97706">精华</span>':'')+(t.is_locked?'<span class="pin" style="color:#6b7280;border-color:#6b7280">🔒</span>':'')+esc(t.title)+'</div>'+
       '<div class="mt"><span style="cursor:pointer;color:var(--primary)" onclick="event.stopPropagation();navigate(\'/u/'+t.user_id+'\')">'+esc(t.author)+'</span><span>'+t.reply_count+' 回复</span><span>'+(t.views||0)+' 浏览</span>'+
       (t.last_reply_by && t.last_reply_by !== t.author ? '<span>最后回复 '+esc(t.last_reply_by)+'</span>' : '')+
       '<span>'+timeAgo(t.updated_at)+'</span></div></div>';
@@ -2141,6 +2191,7 @@ async function viewThread(tid, page){
   html += '<div class="card" style="padding:18px">'+
     (t.pinned ? '<span class="pin" style="color:var(--primary);font-size:12px;border:1px solid var(--primary);border-radius:4px;padding:1px 6px">置顶</span> ' : '')+
     (t.is_digest ? '<span class="pin" style="color:#d97706;font-size:12px;border:1px solid #d97706;border-radius:4px;padding:1px 6px">精华</span> ' : '')+
+    (t.is_locked ? '<span class="pin" style="color:#6b7280;font-size:12px;border:1px solid #6b7280;border-radius:4px;padding:1px 6px">🔒 已锁定</span> ' : '')+
     '<h2 class="tt" style="font-size:20px;line-height:1.5;margin:6px 0 12px">'+esc(t.title)+'</h2>'+
     '<div style="display:flex;align-items:center;gap:10px;font-size:13px;color:var(--muted);flex-wrap:wrap">'+
       avatarHtml(t.author_avatar, t.author)+
@@ -2158,6 +2209,7 @@ async function viewThread(tid, page){
     '</div>'+
     (j.me && j.me.is_admin ? '<div class="toolbar" style="margin-top:4px;margin-bottom:0"><button class="btn ghost" onclick="togglePin('+t.id+','+(t.pinned?0:1)+')">'+(t.pinned?'取消置顶':'置顶')+'</button>'+
     '<button class="btn ghost" onclick="toggleDigest('+t.id+','+(t.is_digest?0:1)+')">'+(t.is_digest?'取消精华':'设为精华')+'</button>'+
+    '<button class="btn ghost" onclick="toggleLock('+t.id+','+(t.is_locked?0:1)+')">'+(t.is_locked?'🔓 解锁':'🔒 锁定')+'</button>'+
     '<button class="btn ghost" style="color:var(--danger)" onclick="delThread('+t.id+','+t.board_id+')">删除主题</button></div>' : '')+'</div>';
   j.posts.forEach((p,i)=>{
     const floor = j.orderDesc ? (j.total - ((j.page-1)*j.per + i)) : ((j.page-1)*j.per + i + 1);
@@ -2184,7 +2236,9 @@ async function viewThread(tid, page){
   });
   html += adHtml('thread_bottom');
   html += pager(j.page, j.per, j.total, '/t/'+tid);
-  if(me){
+  if(t.is_locked && !(me && me.is_admin)){
+    html += '<div class="card" style="text-align:center;padding:24px"><div style="font-size:14px;color:var(--muted)">🔒 该主题已被管理员锁定，无法回复</div></div>';
+  }else if(me){
     html += '<div class="card"><h3 style="font-size:16px;margin-bottom:12px">💬 发表回复</h3><div id="quote-preview"></div>'+
       editorToolbar('reply-box')+
       '<textarea id="reply-box" placeholder="写下你的回复…（可用 @用户名 提醒他）"></textarea>'+
@@ -2322,12 +2376,20 @@ async function toggleDigest(tid, digest){
   try{ await api('/api/threads/'+tid+'/digest',{method:'POST',body:JSON.stringify({digest})}); route(); }
   catch(e){ alert(e.message); }
 }
+async function toggleLock(tid, locked){
+  try{ await api('/api/threads/'+tid+'/lock',{method:'POST',body:JSON.stringify({locked})}); route(); }
+  catch(e){ alert(e.message); }
+}
 async function togglePin(tid, pinned){
   try{ await api('/api/threads/'+tid+'/pin',{method:'POST',body:JSON.stringify({pinned})}); route(); }
   catch(e){ alert(e.message); }
 }
 
-refreshMe().then(()=>loadSiteSettings()).then(()=>loadAds()).then(()=>{ loadSidebar(); route(); });
+refreshMe().then(()=>loadSiteSettings()).then(()=>loadAds()).then(()=>{
+  const oe = new URLSearchParams(location.search).get('oauth_error');
+  if(oe){ history.replaceState(null,'',location.pathname); setTimeout(()=>alert('GitHub 登录失败：'+decodeURIComponent(oe)), 300); }
+  loadSidebar(); route();
+});
 </script>
 </body>
 </html>
