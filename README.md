@@ -18,6 +18,7 @@
 - [🚀 一键部署](#-一键部署)
 - [🛠️ 手动部署](#️-手动部署)
 - [💻 本地开发](#-本地开发)
+- [🔄 更新](#-更新)
 - [📁 项目结构](#-项目结构)
 - [🏗️ 架构](#️-架构)
 - [🔌 API 概览](#-api-概览)
@@ -128,6 +129,45 @@ npx wrangler dev
 ```
 
 访问 http://localhost:8787。第一个注册的用户自动成为管理员。
+
+## 🔄 更新
+
+上游仓库更新后，按你的部署方式二选一：
+
+### 方式一：一键部署的用户
+
+点部署按钮时 Cloudflare 会 fork 本仓库到你账号下，并开启推送自动部署。更新步骤：
+
+1. 打开你 fork 的仓库页面，点 **Sync fork** → **Update branch**，把上游更新同步过来
+2. 同步后 Cloudflare 自动重新部署（1-2 分钟）
+3. **手动执行新增的数据库迁移**（这步不会自动跑）：
+
+```bash
+npx wrangler d1 execute forum-db --remote --file migrations/022-xxx.sql
+# 只需执行上次更新之后新增的迁移文件，按文件名顺序
+```
+
+> ⚠️ 只拉代码不跑迁移，新功能用的表/字段不存在会报错。每次更新后去看 [migrations/](migrations/) 有没有新增文件。
+
+### 方式二：手动部署的用户
+
+```bash
+cd qiewo
+git pull
+
+# 跑新增的迁移（按顺序，只跑上次之后新增的）
+for f in migrations/022-xxx.sql; do
+  npx wrangler d1 execute forum-db --remote --file "$f"
+done
+
+# 重新构建并部署
+node build.js
+npx wrangler deploy
+```
+
+### 如何知道有没有新迁移？
+
+看 [migrations/](migrations/) 目录的更新时间，或看提交记录里有没有新增 `migrations/0xx-xxx.sql` 文件。没有新增就不用跑，直接部署即可。
 
 ## 📁 项目结构
 
