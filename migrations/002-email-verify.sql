@@ -1,0 +1,9 @@
+ALTER TABLE users ADD COLUMN email TEXT;
+ALTER TABLE users ADD COLUMN verified INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE IF NOT EXISTS verify_tokens (
+  token TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
