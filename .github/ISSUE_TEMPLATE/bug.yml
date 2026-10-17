@@ -1,0 +1,33 @@
+name: Bug 反馈
+description: 报告一个 bug
+labels: ["bug"]
+body:
+  - type: textarea
+    id: describe
+    attributes:
+      label: 问题描述
+      description: 清晰描述遇到了什么问题
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 如何复现这个问题
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望行为
+      description: 你期望发生什么
+  - type: input
+    id: url
+    attributes:
+      label: 相关页面
+      description: 出问题的页面 URL
+  - type: textarea
+    id: screenshot
+    attributes:
+      label: 截图
+      description: 拖拽截图到这里
