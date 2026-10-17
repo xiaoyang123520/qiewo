@@ -16,6 +16,7 @@
 - [📸 截图](#-截图)
 - [✨ 功能](#-功能)
 - [🚀 一键部署](#-一键部署)
+- [📧 邮件服务（Resend）](#-邮件服务resend-注册与配置)
 - [🛠️ 手动部署](#️-手动部署)
 - [💻 本地开发](#-本地开发)
 - [🔄 更新](#-更新)
@@ -69,6 +70,63 @@
 设置路径：Workers → cf-forum → 设置 → 变量和机密。
 
 > 不设置也能跑，但注册时的邮箱验证和 Turnstile 验证会被跳过。
+
+## 📧 邮件服务（Resend 注册与配置）
+
+论坛用 Resend 发送注册验证邮件、密码重置邮件。按下面 4 步配置，全程免费。
+
+### 步骤 1：注册 Resend
+
+1. 打开 https://resend.com，点击 **Start Building**
+2. 用 GitHub 或 Google 账号登录（推荐 GitHub，一键登录）
+3. 登录后进入控制台
+
+### 步骤 2：验证发件域名
+
+Resend 不允许用没验证过的域名发信，必须先验证：
+
+1. 控制台左侧点 **Domains** → **Add Domain**
+2. 输入你的域名（如 `example.com`），点 Add
+3. Resend 会给出 3 条 DNS 记录（SPF、DKIM、DMARC），去你的域名 DNS 服务商（Cloudflare/阿里云等）添加这 3 条
+4. 回到 Resend 点 **Verify DNS Records**，一般几分钟内验证通过
+
+> 没有自己的域名？Resend 提供测试域名 `onboarding@resend.dev`，只能发给注册 Resend 时用的那个邮箱，适合本地调试，不适合生产。
+
+### 步骤 3：创建 API Key
+
+1. 左侧点 **API Keys** → **Create API Key**
+2. Name 随便填（如 `forum`），Permission 选 **Sending access**
+3. 点 Create，**立即复制 Key**（只显示一次，格式 `re_xxxx`）
+
+### 步骤 4：配置到论坛
+
+```bash
+# 设为 Worker 密钥（推荐方式）
+npx wrangler secret put RESEND_API_KEY
+# 粘贴刚才复制的 re_xxxx
+```
+
+发件地址在 `wrangler.toml` 的 `[vars]` 里改：
+
+```toml
+[vars]
+FROM_EMAIL = "noreply@你的域名.com"  # 必须是步骤 2 验证过的域名
+```
+
+重新部署生效：
+
+```bash
+node build.js && npx wrangler deploy
+```
+
+### 免费额度
+
+- 每天 100 封，足够中小论坛用
+- 超出后 $0.001/封，按量付费
+
+### 不想用 Resend？
+
+把 `RESEND_API_KEY` 留空即可，论坛会自动跳过邮件验证环节（注册后直接可用）。适合内测或纯自用场景。
 
 ## 🛠️ 手动部署
 
