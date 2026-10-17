@@ -1,10 +1,35 @@
 # 🐧 企鹅窝论坛
 
+![License](https://img.shields.io/badge/license-MIT-green)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange)
+![D1](https://img.shields.io/badge/Database-D1-blue)
+![No Dependencies](https://img.shields.io/badge/dependencies-zero-brightgreen)
+
 跑在 Cloudflare Workers + D1 上的轻量论坛。零依赖后端（纯 Workers 标准 API），前端纯原生 JS 单页应用。
 
 [![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/xiaoyang123520/qiewo)
 
 在线演示：https://linux.lblb.eu
+
+## 📑 目录
+
+- [📸 截图](#-截图)
+- [✨ 功能](#-功能)
+- [🚀 一键部署](#-一键部署)
+- [🛠️ 手动部署](#️-手动部署)
+- [💻 本地开发](#-本地开发)
+- [📁 项目结构](#-项目结构)
+- [🏗️ 架构](#️-架构)
+- [🔌 API 概览](#-api-概览)
+- [💰 成本](#-成本)
+- [🤝 贡献](#-贡献)
+- [📄 License](#-license)
+
+## 📸 截图
+
+| 首页 | 积分商城 | 工具中心 |
+|------|----------|----------|
+| ![首页](docs/screenshots/home.png) | ![商城](docs/screenshots/shop.png) | ![工具](docs/screenshots/tools.png) |
 
 ## ✨ 功能
 
@@ -125,6 +150,42 @@ Cloudflare 免费额度内完全够用：
 - D1：每天 500 万行读取、10 万行写入、5GB 存储
 
 日活几千的论坛都跑得动，不花一分钱。
+
+## 🏗️ 架构
+
+```
+浏览器 (原生 JS SPA)
+    ↓ HTTPS
+Cloudflare Workers (worker.js)
+    ↓ D1 Binding
+Cloudflare D1 (SQLite)
+```
+
+- **零依赖**：后端只用 Workers 标准 API（`crypto.subtle` 做 PBKDF2、`fetch` 调 Resend/Turnstile），前端零框架
+- **单文件部署**：`node build.js` 把前端内联进 Worker，打包成一个 `dist/index.js`
+- **构建时注入**：命令数据库和题库在构建时注入到 HTML 的 `<script>` 开头，避免运行时请求
+
+## 🔌 API 概览
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/register` | 注册 |
+| POST | `/api/login` | 登录 |
+| GET | `/api/boards` | 版块列表 |
+| GET | `/api/boards/:id/threads` | 主题列表 |
+| POST | `/api/threads` | 发主题 |
+| GET | `/api/threads/:id` | 主题详情+回帖 |
+| POST | `/api/threads/:id/posts` | 回帖 |
+| POST | `/api/checkin` | 签到 |
+| GET | `/api/rankings` | 排行榜 |
+| GET | `/api/shop/items` | 商城商品 |
+| POST | `/api/shop/buy/:id` | 购买商品 |
+
+完整接口见 `src/worker.js`。
+
+## 🤝 贡献
+
+欢迎提 Issue 和 PR！详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 ## 📄 License
 
