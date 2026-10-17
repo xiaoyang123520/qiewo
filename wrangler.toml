@@ -2,7 +2,14 @@ name = "cf-forum"
 main = "dist/index.js"
 compatibility_date = "2026-10-01"
 
+# 一键部署时 Cloudflare 会自动创建 D1 并回填 database_id
+# 手动部署时把下面改成你自己的 database_id
 [[d1_databases]]
 binding = "DB"
 database_name = "forum-db"
-database_id = "f31aa47b-d643-4dce-b380-e2e06a9e4ab9"
+database_id = "REPLACE_WITH_YOUR_D1_ID"
+migrations_dir = "migrations"
+
+[vars]
+TURNSTILE_SITE_KEY = ""
+FROM_EMAIL = "noreply@example.com"
