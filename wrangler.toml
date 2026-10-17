@@ -1,0 +1,8 @@
+name = "cf-forum"
+main = "dist/index.js"
+compatibility_date = "2026-10-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "forum-db"
+database_id = "f31aa47b-d643-4dce-b380-e2e06a9e4ab9"
