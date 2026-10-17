@@ -38,10 +38,11 @@
 
 **基础功能**
 - 📝 版块 / 主题 / 回帖，分页、搜索（中英文）、多种排序
-- 👤 注册登录（PBKDF2-SHA256 10 万次哈希）、邮箱验证、忘记密码
-- 🛡️ Turnstile 人机验证、敏感词过滤、举报、禁言
+- 👤 注册登录（PBKDF2-SHA256 10 万次哈希）、邮箱验证、忘记密码、GitHub OAuth 一键登录
+- 🛡️ Turnstile 人机验证、敏感词过滤、举报、禁言、主题锁定
 - 🔔 通知、@ 提及、私信、点赞、收藏、引用（带楼层跳转）
-- 🌙 暗色模式、History API 干净路径、sitemap.xml
+- 🌙 暗色模式、History API 干净路径、sitemap.xml、RSS 订阅
+- 🤖 应用层 botguard（AI 爬虫 / 扫描器自动 403）+ 安全响应头
 
 **社区玩法**
 - 📅 每日签到积分（北京时间，连续签到有加成）
@@ -71,6 +72,18 @@
 设置路径：Workers → cf-forum → 设置 → 变量和机密。
 
 > 不设置也能跑，但注册时的邮箱验证和 Turnstile 验证会被跳过。
+
+## 🔧 Fork 后必改的配置
+
+代码里有三处写了占位值 / 作者自己的配置，fork 后必须换成你自己的，否则对应功能不可用：
+
+| 位置 | 内容 | 怎么改 |
+|------|------|--------|
+| `src/worker.js` | `TURNSTILE_SITEKEY` fallback（公开 sitekey） | 去 [Cloudflare 面板](https://dash.cloudflare.com/) → Turnstile 建站点，换成你自己的 sitekey；`TURNSTILE_SECRET` 配进 Worker Secrets |
+| `src/worker.js` | 发件地址 `noreply@example.com` | 换成你自己的域名邮箱（如 `noreply@你的域名`），并在 Resend 后台验证该域名 |
+| GitHub OAuth | 登录框的 GitHub 按钮 | 去 GitHub Settings → Developer settings → OAuth Apps 建应用，把 `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` 配进 Worker Secrets；不配则按钮自动隐藏 |
+
+> Worker Secrets 设置路径：Cloudflare 面板 → Workers → cf-forum → 设置 → 变量和机密 → 机密。
 
 ## 📧 邮件服务（Resend 注册与配置）
 
