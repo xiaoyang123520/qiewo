@@ -8,7 +8,7 @@
 *{margin:0;padding:0;box-sizing:border-box}
 :root{--bg:#f5f6f8;--card:#fff;--text:#222;--muted:#888;--primary:#16a34a;--border:#e5e7eb;--danger:#dc2626;--input-bg:#fff;--hl:#f0fdf4}
 [data-theme=dark]{--bg:#0d1117;--card:#161b22;--text:#e6edf3;--muted:#a0aab5;--primary:#3fb950;--border:#30363d;--danger:#f85149;--input-bg:#0d1117;--hl:#0d2818}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;max-width:720px;margin:0 auto;min-height:100vh}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;max-width:1100px;margin:0 auto;min-height:100vh}
 header{position:sticky;top:0;z-index:10;background:var(--card);border-bottom:1px solid var(--border);padding:10px 16px;display:flex;align-items:center;justify-content:space-between}
 header .logo{font-size:18px;font-weight:700;cursor:pointer;white-space:nowrap;flex-shrink:0}
 @media(max-width:640px){header .logo{font-size:15px}}
@@ -59,7 +59,9 @@ main{padding:12px 12px 80px}
 .op-post{border-left:3px solid var(--primary)}
 .solution-post{border:2px solid #16a34a;background:linear-gradient(to bottom,var(--hl),var(--card))}
 h2.tt{font-size:18px;margin-bottom:4px}
-textarea,input[type=text],input[type=password]{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-bottom:10px;background:var(--input-bg);color:var(--text)}
+textarea,input[type=text],input[type=password]{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-bottom:10px;background:var(--input-bg);color:var(--text);outline:none;transition:border-color .15s}
+textarea:focus,input[type=text]:focus,input[type=password]:focus{border-color:var(--primary);box-shadow:0 0 0 3px color-mix(in srgb, var(--primary) 15%, transparent)}
+[data-theme=dark] textarea,[data-theme=dark] input[type=text],[data-theme=dark] input[type=password]{border-color:#3d444d}
 select{width:100%;border:1.5px solid var(--border);border-radius:10px;padding:10px 12px;font-size:15px;margin-bottom:10px;background:var(--input-bg);color:var(--text)}
 textarea{min-height:100px;resize:vertical}
 .btn{background:var(--primary);color:#fff;border:none;border-radius:10px;padding:10px 18px;font-size:15px;cursor:pointer;width:100%}
@@ -68,7 +70,12 @@ textarea{min-height:100px;resize:vertical}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:none;align-items:flex-start;justify-content:center;padding-top:15vh}
 #modal.show{display:flex}
 #modal .box{background:var(--card);border-radius:14px;padding:20px;width:88%;max-width:380px}
-#modal .box h3{margin-bottom:14px}
+#modal .box h3{margin-bottom:14px;padding-right:28px}
+#modal .box{position:relative}
+#modal .x{position:absolute;top:12px;right:14px;font-size:20px;color:var(--muted);cursor:pointer;line-height:1;padding:4px}
+#modal .x:hover{color:var(--text)}
+.skel{border-radius:8px;background:linear-gradient(90deg,var(--border) 25%,var(--card) 50%,var(--border) 75%);background-size:200% 100%;animation:skel 1.2s infinite}
+@keyframes skel{0%{background-position:200% 0}100%{background-position:-200% 0}}
 #modal .box .row{display:flex;gap:10px}
 .hint{font-size:13px;color:var(--muted);text-align:center;padding:30px 0}
 .err{color:var(--danger);font-size:13px;margin:-4px 0 10px;min-height:18px}
@@ -190,15 +197,15 @@ textarea{min-height:100px;resize:vertical}
   </div>
   <div class="user" id="userbar"><span>加载中…</span></div>
 </header>
-<div id="searchbar" style="max-width:720px;margin:0 auto;padding:10px 12px 0;display:none">
+<div id="searchbar" style="max-width:1100px;margin:0 auto;padding:10px 12px 0;display:none">
   <div class="searchbar">
     <input type="text" id="q" placeholder="搜索帖子…" onkeydown="if(event.key==='Enter')doSearch()">
-    <button class="btn" onclick="doSearch()">搜索</button>
+    <button class="btn ghost" onclick="doSearch()">搜索</button>
   </div>
 </div>
 <div class="layout" id="layout">
   <aside id="sidebar"></aside>
-  <main id="app"></main>
+  <main id="app"><div class="card"><div class="skel" style="height:22px;width:60%;margin-bottom:12px"></div><div class="skel" style="height:14px;width:90%;margin-bottom:8px"></div><div class="skel" style="height:14px;width:75%"></div></div><div class="card"><div class="skel" style="height:22px;width:50%;margin-bottom:12px"></div><div class="skel" style="height:14px;width:85%;margin-bottom:8px"></div><div class="skel" style="height:14px;width:65%"></div></div></main>
 </div>
 <div id="drawer-mask" onclick="closeDrawer()"></div>
 <div id="lightbox" onclick="if(event.target.id==='lightbox')closeLightbox()">
@@ -271,7 +278,7 @@ async function loadSiteSettings(){
 }
 function announcementBanner(){
   if(siteSettings.announcement){
-    return '<div class="card" style="border-color:#3b82f6;background:var(--hl)">📢 ' + esc(siteSettings.announcement) + '</div>';
+    return '<div class="card" style="background:var(--hl)">📢 ' + esc(siteSettings.announcement) + '</div>';
   }
   return '';
 }
@@ -680,7 +687,7 @@ function avatarHtml(url, name, size, frame){
   return '<span class="'+(size==='big'?'avatar-big-letter':'avatar-letter')+'" style="'+frameStyle+'">'+esc((name||'?').slice(0,1))+'</span>';
 }
 function showModal(html){
-  document.getElementById('modal-box').innerHTML = html;
+  document.getElementById('modal-box').innerHTML = '<span class="x" onclick="hideModal()">×</span>' + html;
   document.getElementById('modal').classList.add('show');
 }
 function hideModal(){ document.getElementById('modal').classList.remove('show'); }
@@ -695,7 +702,7 @@ function renderTurnstile(containerId){
   const load = ()=>{
     if(typeof turnstile === 'undefined'){ setTimeout(load, 300); return; }
     try{ if(turnstileWidgetId !== null) turnstile.remove(turnstileWidgetId); }catch(e){}
-    turnstileWidgetId = turnstile.render('#'+containerId, { sitekey: key, theme: 'auto' });
+    turnstileWidgetId = turnstile.render('#'+containerId, { sitekey: key, theme: 'auto', language: 'zh-CN' });
   };
   if(typeof turnstile === 'undefined'){
     const s = document.createElement('script');
@@ -722,10 +729,10 @@ function showLogin(){
     '<input type="password" id="m-pass" placeholder="密码" autocomplete="current-password">'+
     turnstileDiv()+
     '<div class="row"><button class="btn ghost" onclick="hideModal()">取消</button><button class="btn" onclick="doLogin()">登录</button></div>'+
-    '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
+    (siteSettings.github_oauth ? '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
     '<button class="btn ghost" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px" onclick="location.href=\'/api/auth/github\'">'+
     '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'+
-    '使用 GitHub 登录</button>'+
+    '使用 GitHub 登录</button>' : '')+
     '<div style="text-align:center;margin-top:10px"><a style="font-size:13px;color:var(--primary);cursor:pointer" onclick="showForgot()">忘记密码？</a></div>');
   renderTurnstile('ts-widget');
 }
@@ -757,10 +764,10 @@ function showRegister(){
     turnstileDiv()+
     '<div style="font-size:12px;color:var(--muted);margin-bottom:10px">注册即表示同意<a style="color:var(--primary);cursor:pointer" onclick="hideModal();navigate(\'/rules\')">《社区规范》</a></div>'+
     '<div class="row"><button class="btn ghost" onclick="hideModal()">取消</button><button class="btn" onclick="doRegister()">注册</button></div>'+
-    '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
+    (siteSettings.github_oauth ? '<div style="text-align:center;margin:12px 0 4px;color:var(--muted);font-size:12px">— 或 —</div>'+
     '<button class="btn ghost" style="width:100%;display:flex;align-items:center;justify-content:center;gap:8px" onclick="location.href=\'/api/auth/github\'">'+
     '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>'+
-    '使用 GitHub 一键注册</button>');
+    '使用 GitHub 一键注册</button>' : ''));
   renderTurnstile('ts-widget');
 }
 async function doRegister(){
