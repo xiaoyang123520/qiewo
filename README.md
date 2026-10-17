@@ -25,12 +25,6 @@
 - [🤝 贡献](#-贡献)
 - [📄 License](#-license)
 
-## 📸 截图
-
-| 首页 | 积分商城 | 工具中心 |
-|------|----------|----------|
-| ![首页](docs/screenshots/home.png) | ![商城](docs/screenshots/shop.png) | ![工具](docs/screenshots/tools.png) |
-
 ## ✨ 功能
 
 **基础功能**
