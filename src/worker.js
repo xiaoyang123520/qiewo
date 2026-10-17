@@ -4,9 +4,46 @@ const APP_HTML = "__APP_HTML__";
 function json(data, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', ...extraHeaders },
+    headers: { 'Content-Type': 'application/json; charset=utf-8', ...SEC_HEADERS, ...extraHeaders },
   });
 }
+// 应用层 botguard：AI 训练爬虫 / 脚本客户端 / 漏洞扫描直接 403，不消耗 D1
+// 搜索引擎放行（但禁 /api/ 与管理后台）；社交预览放行（分享卡片需要）
+function botGuard(req, path) {
+  const ua = req.headers.get('User-Agent') || '';
+  const ual = ua.toLowerCase();
+  const block = (reason) => new Response('Forbidden', { status: 403, headers: { ...SEC_HEADERS } });
+
+  // 空 UA：只拦 API，页面放行（防误伤 UA 被剥离的正常浏览器）
+  if (!ua.trim() && path.startsWith('/api/')) return block('empty-ua');
+
+  // AI 训练 / 商业采集爬虫
+  if (/gptbot|ccbot|claudebot|anthropic|bytespider|ahrefsbot|semrushbot|mj12bot|dotbot|petalbot|dataforseo/i.test(ua)) return block('ai-crawler');
+
+  // 脚本客户端与扫描器（RSS 豁免：本来就是给机器读的）
+  if (!path.startsWith('/rss') && /curl|python-requests|python-urllib|go-http-client|scrapy|headlesschrome|phantomjs|sqlmap|nuclei|nikto|masscan|zgrab/i.test(ua)) return block('script-client');
+
+  // 漏洞扫描路径
+  if (/\/(wp-login|wp-admin|\.env|\.git|phpmyadmin|pma|actuator|server-status|\.svn|\.hg|composer\.json|package\.json)/i.test(path)) return block('scan-path');
+
+  // 搜索引擎：放行，但禁 API 与后台
+  if (/googlebot|bingbot|baiduspider|yandexbot|sogou|360spider|duckduckbot/i.test(ua)) {
+    if (path.startsWith('/api/') || path.startsWith('/admin')) return block('bot-restricted');
+    return null;
+  }
+  // 社交预览：放行
+  if (/twitterbot|telegrambot|discordbot|facebookexternalhit|linkedinbot|slackbot|whatsapp/i.test(ua)) return null;
+
+  return null;
+}
+
+// 安全响应头：防点击劫持 / MIME 嗅探 / 限制引用来源
+const SEC_HEADERS = {
+  'X-Frame-Options': 'SAMEORIGIN',
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+};
 function getCookie(req, name) {
   const c = req.headers.get('Cookie') || '';
   const m = c.match(new RegExp('(?:^|;\\s*)' + name + '=([^;]*)'));
@@ -159,7 +196,7 @@ async function notifyMentions(env, content, fromUserId, threadId, postId) {
   const now = Date.now();
   const batch = [];
   for (const name of names) {
-    const u = await env.DB.prepare('SELECT id FROM users WHERE name=?').bind(name).first();
+    const u = await env.DB.prepare('SELECT id FROM users WHERE lower(name)=lower(?)').bind(name).first();
     if (u && u.id !== fromUserId) {
       batch.push(env.DB.prepare(
         'INSERT INTO notifications (user_id, type, from_user_id, thread_id, post_id, created_at) VALUES (?,?,?,?,?,?)'
@@ -221,11 +258,15 @@ export default {
     const path = url.pathname;
     const method = req.method.toUpperCase();
 
+    // ---------- 应用层 botguard：恶意 UA / 扫描路径直接 403，不查 D1 ----------
+    const guardBlock = botGuard(req, path);
+    if (guardBlock) return guardBlock;
+
     // ---------- robots.txt ----------
     if (path === '/robots.txt' && method === 'GET') {
       const origin = new URL(req.url).origin;
       const txt = `User-agent: *\nAllow: /\nDisallow: /api/\nCrawl-delay: 5\nSitemap: ${origin}/sitemap.xml\n`;
-      return new Response(txt, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      return new Response(txt, { headers: { 'Content-Type': 'text/plain; charset=utf-8', ...SEC_HEADERS } });
     }
     // ---------- sitemap ----------
     if (path === '/sitemap.xml' && method === 'GET') {
@@ -242,17 +283,40 @@ export default {
       xml += '<url><loc>'+origin+'/tools/shellcheck</loc><changefreq>weekly</changefreq></url>';
       xml += '<url><loc>'+origin+'/rankings</loc><changefreq>daily</changefreq></url>';
       xml += '<url><loc>'+origin+'/shop</loc><changefreq>daily</changefreq></url>';
+      xml += '<url><loc>'+origin+'/rss</loc><changefreq>hourly</changefreq></url>';
       boards.forEach(b=>{ xml += '<url><loc>'+origin+'/b/'+b.id+'</loc><changefreq>hourly</changefreq></url>'; });
       threads.forEach(t=>{
         xml += '<url><loc>'+origin+'/t/'+t.id+'</loc><lastmod>'+new Date(t.updated_at).toISOString()+'</lastmod><changefreq>daily</changefreq></url>';
       });
       xml += '</urlset>';
-      return new Response(xml, { headers: { 'Content-Type': 'application/xml; charset=utf-8' } });
+      return new Response(xml, { headers: { 'Content-Type': 'application/xml; charset=utf-8', ...SEC_HEADERS } });
+    }
+    // ---------- RSS 订阅 ----------
+    if (path === '/rss' && method === 'GET') {
+      const origin = new URL(req.url).origin;
+      const { results: items } = await env.DB.prepare(
+        `SELECT t.id, t.title, t.created_at, t.updated_at, u.name AS author, b.name AS board_name
+         FROM threads t JOIN users u ON u.id=t.user_id JOIN boards b ON b.id=t.board_id
+         ORDER BY t.updated_at DESC LIMIT 20`
+      ).all().catch(()=>({results:[]}));
+      const escXml = (s) => String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      let rss = '<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel>';
+      rss += '<title>企鹅窝</title><link>'+origin+'/</link><description>能学、能玩、能干活的 Linux 社区</description><language>zh-CN</language>';
+      for (const t of items) {
+        rss += '<item><title>'+escXml(t.title)+'</title>'
+          + '<link>'+origin+'/t/'+t.id+'</link>'
+          + '<guid>'+origin+'/t/'+t.id+'</guid>'
+          + '<author>'+escXml(t.author)+'</author>'
+          + '<category>'+escXml(t.board_name)+'</category>'
+          + '<pubDate>'+new Date(t.created_at).toUTCString()+'</pubDate></item>';
+      }
+      rss += '</channel></rss>';
+      return new Response(rss, { headers: { 'Content-Type': 'application/rss+xml; charset=utf-8', ...SEC_HEADERS } });
     }
 
     // 前端页面（History API 路由：所有非 /api/ 路径都返回 SPA）
     if (path === '/' || !path.startsWith('/api/')) {
-      return new Response(APP_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      return new Response(APP_HTML, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...SEC_HEADERS } });
     }
 
     await ensureSeed(env);
@@ -319,7 +383,7 @@ export default {
         if (!/^[a-zA-Z0-9_\u4e00-\u9fa5]{2,16}$/.test(name)) return json({ error: '用户名需 2-16 位：中文/字母/数字/下划线' }, 400);
         if (password.length < 4 || password.length > 64) return json({ error: '密码需 4-64 位' }, 400);
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: '邮箱格式不正确' }, 400);
-        const exists = await env.DB.prepare('SELECT id FROM users WHERE name=?').bind(name).first();
+        const exists = await env.DB.prepare('SELECT id FROM users WHERE lower(name)=lower(?)').bind(name).first();
         if (exists) return json({ error: '用户名已被占用' }, 400);
         const emailExists = await env.DB.prepare('SELECT id FROM users WHERE email=?').bind(email).first();
         if (emailExists) return json({ error: '该邮箱已注册' }, 400);
@@ -357,8 +421,12 @@ export default {
         }
         const name = String(body.name || '').trim();
         const password = String(body.password || '');
-        const u = await env.DB.prepare('SELECT * FROM users WHERE name=?').bind(name).first();
-        if (!u || !(await checkPass(password, u))) {
+        const u = await env.DB.prepare('SELECT * FROM users WHERE lower(name)=lower(?)').bind(name).first();
+        if (!u) return json({ error: '用户名或密码错误' }, 401);
+        if (u.pass_hash === 'oauth$') {
+          return json({ error: '该账号通过 GitHub 登录，请点击 GitHub 登录按钮' }, 401);
+        }
+        if (!(await checkPass(password, u))) {
           return json({ error: '用户名或密码错误' }, 401);
         }
         // 老格式密码自动升级为 PBKDF2
@@ -376,6 +444,125 @@ export default {
         const token = getCookie(req, 'sid');
         if (token) await env.DB.prepare('DELETE FROM sessions WHERE token=?').bind(token).run();
         return json({ ok: true }, 200, { 'Set-Cookie': sessionCookie('deleted', 0) });
+      }
+      // ---------- GitHub OAuth ----------
+      if (seg[0] === 'auth' && seg[1] === 'github' && method === 'GET' && seg.length === 2) {
+        const clientId = env.GITHUB_CLIENT_ID;
+        if (!clientId) return new Response('GitHub 登录未配置', { status: 500 });
+        const state = randHex(16);
+        const redirectUri = new URL(req.url).origin + '/api/auth/github/callback';
+        const authUrl = 'https://github.com/login/oauth/authorize?client_id=' + encodeURIComponent(clientId)
+          + '&redirect_uri=' + encodeURIComponent(redirectUri) + '&scope=user:email&state=' + state;
+        return new Response(null, { status: 302, headers: {
+          'Location': authUrl,
+          'Set-Cookie': 'oauth_state=' + state + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=600; Secure',
+          ...SEC_HEADERS,
+        }});
+      }
+      if (seg[0] === 'auth' && seg[1] === 'github' && seg[2] === 'callback' && method === 'GET') {
+        const origin = new URL(req.url).origin;
+        const fail = (msg) => new Response(null, { status: 302, headers: { 'Location': origin + '/?oauth_error=' + encodeURIComponent(msg), ...SEC_HEADERS } });
+        const code = url.searchParams.get('code');
+        const state = url.searchParams.get('state');
+        const stateCookie = getCookie(req, 'oauth_state');
+        if (!code || !state || !stateCookie || state !== stateCookie) return fail('授权验证失败，请重试');
+        const clientId = env.GITHUB_CLIENT_ID, clientSecret = env.GITHUB_CLIENT_SECRET;
+        if (!clientId || !clientSecret) return fail('GitHub 登录未配置');
+        // code 换 access_token
+        let tokenData;
+        try {
+          const tr = await fetch('https://github.com/login/oauth/access_token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'User-Agent': 'qiewo-forum' },
+            body: JSON.stringify({ client_id: clientId, client_secret: clientSecret, code }),
+          });
+          tokenData = await tr.json();
+        } catch (e) { return fail('换取令牌失败'); }
+        const accessToken = tokenData.access_token;
+        if (!accessToken) return fail('授权失败：' + (tokenData.error_description || tokenData.error || '未知错误'));
+        // 拉用户信息
+        let ghUser, ghEmails = [];
+        try {
+          const ur = await fetch('https://api.github.com/user', {
+            headers: { 'Authorization': 'Bearer ' + accessToken, 'User-Agent': 'qiewo-forum', 'Accept': 'application/vnd.github+json' },
+          });
+          ghUser = await ur.json();
+          const er = await fetch('https://api.github.com/user/emails', {
+            headers: { 'Authorization': 'Bearer ' + accessToken, 'User-Agent': 'qiewo-forum', 'Accept': 'application/vnd.github+json' },
+          });
+          ghEmails = await er.json().catch(() => []);
+        } catch (e) { return fail('获取用户信息失败'); }
+        if (!ghUser || !ghUser.id) return fail('获取用户信息失败');
+        const ghId = String(ghUser.id);
+        let email = (ghUser.email || '').toLowerCase();
+        if ((!email || ghUser.email === null) && Array.isArray(ghEmails)) {
+          const primary = ghEmails.find(e => e.primary && e.verified) || ghEmails.find(e => e.verified);
+          if (primary) email = primary.email.toLowerCase();
+        }
+        // 1. 已绑定的 OAuth 账号 → 直接登录
+        let user = null;
+        const bound = await env.DB.prepare('SELECT user_id FROM oauth_accounts WHERE provider=? AND provider_user_id=?').bind('github', ghId).first();
+        if (bound) {
+          user = await env.DB.prepare('SELECT * FROM users WHERE id=?').bind(bound.user_id).first();
+        }
+        // 2. 同邮箱账号 → 绑定并登录
+        if (!user && email) {
+          const byEmail = await env.DB.prepare('SELECT * FROM users WHERE lower(email)=lower(?)').bind(email).first();
+          if (byEmail) {
+            user = byEmail;
+            await env.DB.prepare('INSERT OR IGNORE INTO oauth_accounts (user_id, provider, provider_user_id, created_at) VALUES (?,?,?,?)')
+              .bind(user.id, 'github', ghId, Date.now()).run();
+          }
+        }
+        // 3. 新建账号
+        if (!user) {
+          let name = String(ghUser.login || 'gh_user').slice(0, 16).replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, '_') || 'gh_user';
+          // 用户名冲突加后缀
+          let tryName = name, suffix = 0;
+          while (await env.DB.prepare('SELECT 1 FROM users WHERE lower(name)=lower(?)').bind(tryName).first()) {
+            suffix++;
+            tryName = (name + '_' + suffix).slice(0, 16);
+            if (suffix > 99) return fail('用户名分配失败，请联系管理员');
+          }
+          name = tryName;
+          const count = await env.DB.prepare('SELECT COUNT(*) AS c FROM users').first();
+          const isAdmin = count.c === 0 ? 1 : 0;
+          // OAuth 用户无密码，pass_hash 存空标记
+          const r = await env.DB.prepare(
+            'INSERT INTO users (name, email, pass_hash, salt, verified, is_admin, created_at, points) VALUES (?,?,?,?,?,?,?,?)'
+          ).bind(name, email || '', 'oauth$', '', email ? 1 : 0, isAdmin, Date.now(), 0).run();
+          const uid = r.meta.last_row_id;
+          await env.DB.prepare('INSERT INTO oauth_accounts (user_id, provider, provider_user_id, created_at) VALUES (?,?,?,?)')
+            .bind(uid, 'github', ghId, Date.now()).run();
+          user = await env.DB.prepare('SELECT * FROM users WHERE id=?').bind(uid).first();
+        }
+        if (!user) return fail('登录失败');
+        if (user.banned) return fail('账号已被封禁');
+        // 发会话 cookie，跳回首页
+        const token = randHex(32);
+        await env.DB.prepare('INSERT INTO sessions (token, user_id, expires_at) VALUES (?,?,?)')
+          .bind(token, user.id, Date.now() + 30 * 86400 * 1000).run();
+        const h = new Headers({ 'Location': origin + '/', ...SEC_HEADERS });
+        h.append('Set-Cookie', sessionCookie(token, 2592000));
+        h.append('Set-Cookie', 'oauth_state=deleted; Path=/; Max-Age=0');
+        return new Response(null, { status: 302, headers: h });
+      }
+      // ---------- OAuth 绑定管理 ----------
+      if (seg[0] === 'oauth' && seg[1] === 'bindings' && method === 'GET') {
+        if (!me) return json({ error: '请先登录' }, 401);
+        const { results } = await env.DB.prepare('SELECT provider, provider_user_id, created_at FROM oauth_accounts WHERE user_id=?').bind(me.id).all();
+        return json({ bindings: results || [], githubConfigured: !!env.GITHUB_CLIENT_ID });
+      }
+      if (seg[0] === 'oauth' && seg[1] === 'unbind' && method === 'POST') {
+        if (!me) return json({ error: '请先登录' }, 401);
+        const provider = String(body.provider || '');
+        // 解绑前确认还有密码登录方式（防锁死）
+        const u = await env.DB.prepare('SELECT pass_hash FROM users WHERE id=?').bind(me.id).first();
+        if (u && u.pass_hash === 'oauth$') {
+          return json({ error: '这是你唯一的登录方式，请先在设置里设置密码后再解绑' }, 400);
+        }
+        await env.DB.prepare('DELETE FROM oauth_accounts WHERE user_id=? AND provider=?').bind(me.id, provider).run();
+        return json({ ok: true });
       }
       if (seg[0] === 'me' && method === 'GET') {
         return json({ user: me ? { id: me.id, name: me.name, is_admin: me.is_admin, email: me.email, verified: me.verified, avatar_url: me.avatar_url, bio: me.bio, points: me.points, custom_title: me.custom_title, avatar_frame: me.avatar_frame } : null });
@@ -525,7 +712,7 @@ export default {
             const daysLeft = Math.ceil((30 * 86400000 - (now - lastRename.used_at)) / 86400000);
             return json({ error: '改名卡30天内限用1次，还需等待 ' + daysLeft + ' 天' }, 400);
           }
-          const exists = await env.DB.prepare('SELECT 1 FROM users WHERE name=?').bind(extra).first();
+          const exists = await env.DB.prepare('SELECT 1 FROM users WHERE lower(name)=lower(?)').bind(extra).first();
           if (exists) return json({ error: '用户名已存在' }, 400);
           await env.DB.prepare('UPDATE users SET name=? WHERE id=?').bind(extra, me.id).run();
         } else if (ui.item_type === 'avatar_frame') {
@@ -786,7 +973,8 @@ export default {
         const oldPass = String(body.old_password || '');
         const newPass = String(body.new_password || '');
         const u = await env.DB.prepare('SELECT * FROM users WHERE id=?').bind(me.id).first();
-        if (!(await checkPass(oldPass, u))) return json({ error: '原密码错误' }, 400);
+        // OAuth 用户（无密码）可直接设置密码，无需验证旧密码
+        if (u.pass_hash !== 'oauth$' && !(await checkPass(oldPass, u))) return json({ error: '原密码错误' }, 400);
         if (newPass.length < 4 || newPass.length > 64) return json({ error: '新密码需 4-64 位' }, 400);
         const salt = randHex(16);
         const ph2 = await makePassHash(newPass);
@@ -1128,8 +1316,9 @@ export default {
         if (!tid || !content) return json({ error: '内容不能为空' }, 400);
         const badWord = await checkSensitive(env, content);
         if (badWord) return json({ error: '内容包含敏感词，请修改后重试' }, 400);
-        const t = await env.DB.prepare('SELECT id, user_id FROM threads WHERE id=?').bind(tid).first();
+        const t = await env.DB.prepare('SELECT id, user_id, is_locked FROM threads WHERE id=?').bind(tid).first();
         if (!t) return json({ error: '主题不存在' }, 404);
+        if (t.is_locked && !me.is_admin) return json({ error: '该主题已被锁定，无法回复' }, 403);
         const now = Date.now();
         const pr = await env.DB.prepare('INSERT INTO posts (thread_id, user_id, content, created_at) VALUES (?,?,?,?)')
           .bind(tid, me.id, content, now).run();
@@ -1200,7 +1389,7 @@ export default {
           // 中文用 LIKE 模糊搜索（FTS5 默认分词器切不动中文）
           const like = '%' + q.replace(/[%_]/g, '') + '%';
           const r = await env.DB.prepare(
-            `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, u.name AS author, b.name AS board_name
+            `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, t.is_locked, u.name AS author, b.name AS board_name
              FROM threads t JOIN users u ON u.id=t.user_id JOIN boards b ON b.id=t.board_id
              WHERE t.title LIKE ? OR t.id IN (SELECT thread_id FROM posts WHERE content LIKE ?)
              ORDER BY t.updated_at DESC LIMIT 20`
@@ -1210,7 +1399,7 @@ export default {
           const ftsq = sanitizeFts(q);
           if (ftsq) {
             const r = await env.DB.prepare(
-              `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, u.name AS author, b.name AS board_name
+              `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, t.is_locked, u.name AS author, b.name AS board_name
                FROM threads_fts f JOIN threads t ON t.id=f.thread_id
                JOIN users u ON u.id=t.user_id JOIN boards b ON b.id=t.board_id
                WHERE threads_fts MATCH ? ORDER BY rank LIMIT 20`
@@ -1221,7 +1410,7 @@ export default {
           if (!results.length) {
             const like = '%' + q.replace(/[%_]/g, '') + '%';
             const r2 = await env.DB.prepare(
-              `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, u.name AS author, b.name AS board_name
+              `SELECT t.id, t.title, t.user_id, t.reply_count, t.updated_at, t.is_locked, u.name AS author, b.name AS board_name
                FROM threads t JOIN users u ON u.id=t.user_id JOIN boards b ON b.id=t.board_id
                WHERE t.title LIKE ? OR t.id IN (SELECT thread_id FROM posts WHERE content LIKE ?)
                ORDER BY t.updated_at DESC LIMIT 20`
@@ -1368,7 +1557,8 @@ export default {
         const { results } = await env.DB.prepare('SELECT key, value FROM settings').all();
         const s = {};
         results.forEach(r => { s[r.key] = r.value; });
-        if (env.TURNSTILE_SITEKEY) s.turnstile_sitekey = env.TURNSTILE_SITEKEY;
+        if (env.TURNSTILE_SITE_KEY || env.TURNSTILE_SITEKEY) s.turnstile_sitekey = env.TURNSTILE_SITE_KEY || env.TURNSTILE_SITEKEY;
+        else s.turnstile_sitekey = '0x4AAAAAAFYe5ta84R_bZXQ9'; // 公开 sitekey，直接内置防变量丢失
         return json({ settings: s });
       }
       if (seg[0] === 'admin' && seg[1] === 'settings' && method === 'PUT') {
@@ -1528,6 +1718,14 @@ export default {
         const deny = requireAdmin(me); if (deny) return deny;
         const tid = Number(seg[1]);
         await env.DB.prepare('UPDATE threads SET is_digest=? WHERE id=?').bind(body.digest ? 1 : 0, tid).run();
+        return json({ ok: true });
+      }
+
+      // ---------- 锁定 / 解锁 ----------
+      if (seg[0] === 'threads' && seg[2] === 'lock' && method === 'POST') {
+        const deny = requireAdmin(me); if (deny) return deny;
+        const tid = Number(seg[1]);
+        await env.DB.prepare('UPDATE threads SET is_locked=? WHERE id=?').bind(body.locked ? 1 : 0, tid).run();
         return json({ ok: true });
       }
 
