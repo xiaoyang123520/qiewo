@@ -251,6 +251,315 @@ async function readBody(req) {
   try { return await req.json(); } catch (e) { return {}; }
 }
 
+/* ==================================================================
+ * AI 每日精选（v2026-10-25）
+ * Cron 每 6 小时触发：抓 V2EX / NodeSeek / linux.do 公开订阅源 →
+ * 按 URL 去重（ai_ingest 表）→ AI 打分筛选 → AI 写摘要+点评 →
+ * 以官方账号「精选君」自动发帖到「📰 每日精选」版块。
+ * 红线：只发摘要+点评+原文链接+来源标注，不搬运全文。
+ * 开关：settings.ai_digest_enabled = '0' 时 Cron 跳过。
+ * 密钥：Worker Secrets —— AI_API_KEY / AI_API_BASE / AI_MODEL。
+ * ================================================================== */
+const AI_DIGEST_CFG = { PER_RUN: 2, PER_DAY: 6, MIN_SCORE: 70 };
+const AI_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const AI_BOT_NAME = '精选君';
+const AI_BOARD_NAME = '📰 每日精选';
+
+async function getSetting(env, key, dflt) {
+  try {
+    const r = await env.DB.prepare('SELECT value FROM settings WHERE key=?').bind(key).first();
+    return r ? r.value : dflt;
+  } catch (e) { return dflt; }
+}
+function decodeEntities(s) {
+  return String(s == null ? '' : s)
+    .replace(/&#(\d+);/g, (m, n) => String.fromCodePoint(Number(n)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, n) => String.fromCodePoint(parseInt(n, 16)))
+    .replace(/&nbsp;/g, ' ').replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+}
+function stripHtml(s) {
+  return decodeEntities(String(s == null ? '' : s)
+    .replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, ' '))
+    .replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n').trim();
+}
+// 清理 AI 输出：去掉 markdown 标记，避免版式错乱与 @ 误触发
+function aiClean(s, max) {
+  return String(s == null ? '' : s)
+    .replace(/[*`#>@]/g, '').replace(/\s*\n\s*/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max || 500);
+}
+async function aiFetchText(url, timeoutMs) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), timeoutMs || 15000);
+  try {
+    const r = await fetch(url, { headers: { 'User-Agent': AI_UA, 'Accept': '*/*' }, signal: ctl.signal, redirect: 'follow' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return await r.text();
+  } finally { clearTimeout(t); }
+}
+async function aiFetchJson(url) { return JSON.parse(await aiFetchText(url)); }
+
+/* ---------- 数据源 ---------- */
+async function aiFetchV2ex() {
+  const items = [], seen = new Set();
+  for (const ep of ['latest', 'hot']) {
+    try {
+      const arr = await aiFetchJson('https://www.v2ex.com/api/topics/' + ep + '.json');
+      for (const t of (Array.isArray(arr) ? arr : []).slice(0, 30)) {
+        if (!t || !t.url || !t.title || seen.has(t.url)) continue;
+        seen.add(t.url);
+        items.push({
+          source: 'v2ex', sourceLabel: 'V2EX', url: t.url,
+          title: String(t.title).trim(),
+          author: t.member ? String(t.member.username || '') : '',
+          extra: t.node ? '节点：' + String(t.node.title || '') : '',
+          text: String(t.content || '').slice(0, 3000),
+        });
+      }
+    } catch (e) { console.log('[ai-digest] v2ex/' + ep + ' 抓取失败：' + e.message); }
+  }
+  return items;
+}
+function aiParseRss(xml, limit) {
+  const items = [];
+  const pick = (s, tag) => {
+    const m = s.match(new RegExp('<' + tag + '>(?:<!\\[CDATA\\[)?([\\s\\S]*?)(?:\\]\\]>)?</' + tag + '>'));
+    return m ? m[1].trim() : '';
+  };
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = re.exec(xml)) && items.length < limit) {
+    const b = m[1];
+    items.push({ title: decodeEntities(pick(b, 'title')), link: pick(b, 'link'), desc: stripHtml(pick(b, 'description')), author: pick(b, 'dc:creator') });
+  }
+  return items;
+}
+async function aiFetchNodeSeek() {
+  const xml = await aiFetchText('https://rss.nodeseek.com/');
+  return aiParseRss(xml, 20).filter(x => x.title && x.link).map(x => ({
+    source: 'nodeseek', sourceLabel: 'NodeSeek', url: x.link,
+    title: x.title, author: x.author || '', extra: '', text: x.desc.slice(0, 3000),
+  }));
+}
+async function aiFetchLinuxDo() {
+  const j = await aiFetchJson('https://linux.do/latest.json');
+  const users = {};
+  (j.users || []).forEach(u => { users[u.id] = u.username; });
+  const items = [];
+  const topics = (j.topic_list && j.topic_list.topics) || [];
+  for (const t of topics.slice(0, 30)) {
+    if (!t || !t.title || t.visible === false || t.pinned_globally || t.pinned) continue;
+    items.push({
+      source: 'linuxdo', sourceLabel: 'linux.do',
+      url: 'https://linux.do/t/' + (t.slug || 'topic') + '/' + t.id,
+      title: String(t.title).trim(),
+      author: (t.posters && t.posters[0]) ? String(users[t.posters[0].user_id] || '') : '',
+      extra: '',
+      text: stripHtml(t.excerpt || '').slice(0, 3000),
+    });
+  }
+  return items;
+}
+// linux.do 摘要前补抓首帖全文（excerpt 不够长时）
+async function aiFetchLinuxDoFull(item) {
+  const m = item.url.match(/(\d+)\/?$/);
+  if (!m) return '';
+  const j = await aiFetchJson('https://linux.do/t/' + m[1] + '.json');
+  const posts = j && j.post_stream && j.post_stream.posts;
+  if (!posts || !posts.length) return '';
+  return stripHtml(posts[0].cooked || '').slice(0, 3500);
+}
+
+/* ---------- AI 调用 ---------- */
+async function aiChat(env, messages, maxTokens) {
+  if (!env.AI_API_KEY) throw new Error('AI_API_KEY 未配置');
+  const base = String(env.AI_API_BASE || 'https://api.openai.com/v1').replace(/\/+$/, '');
+  const model = env.AI_MODEL || 'gpt-4o-mini';
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 60000);
+  try {
+    const r = await fetch(base + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + env.AI_API_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model, messages, temperature: 0.3, max_tokens: maxTokens || 2000 }),
+      signal: ctl.signal,
+    });
+    if (!r.ok) throw new Error('AI HTTP ' + r.status);
+    const j = await r.json();
+    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+  } finally { clearTimeout(t); }
+}
+function aiParseJson(s) {
+  if (!s) return null;
+  const m = String(s).match(/\[[\s\S]*\]|\{[\s\S]*\}/);
+  try { return JSON.parse(m ? m[0] : s); } catch (e) { return null; }
+}
+async function aiScoreBatch(env, batch) {
+  const lines = batch.map((it, i) =>
+    i + '. [' + it.sourceLabel + '] ' + it.title + (it.text ? '\n   摘录：' + it.text.replace(/\s+/g, ' ').slice(0, 200) : '')
+  ).join('\n');
+  const prompt = '你是论坛「企鹅窝」的内容精选编辑。企鹅窝定位：Linux / VPS / 服务器 / 建站 / 自托管 / AI 工具社区。'
+    + '下面是一批候选帖子，请逐条打分（0-100 整数）：\n'
+    + '- 高分（70+）：与 VPS、服务器、Linux、建站、自托管、网络技术、AI 工具/模型相关的教程、测评、经验分享、行业资讯、优质工具发布；\n'
+    + '- 低分（40 以下）：纯广告、商家促销、affiliate 返利推广、个人交易（收/出/求购/拼车）、抽奖羊毛、灌水闲聊、情感八卦、站务公告、与社区定位无关的内容，这类同时把 ad 标为 true；\n'
+    + '- 拿不准给 40-60。\n'
+    + '只输出 JSON 数组，每项 {"i": 序号, "score": 数字, "ad": true/false}，不要输出任何其他文字。\n\n候选：\n' + lines;
+  const out = await aiChat(env, [{ role: 'user', content: prompt }], 4000);
+  const arr = aiParseJson(out);
+  if (!Array.isArray(arr)) throw new Error('打分结果解析失败');
+  return arr.filter(x => x && Number.isInteger(x.i) && x.i >= 0 && x.i < batch.length)
+    .map(x => ({ i: x.i, score: Math.max(0, Math.min(100, Number(x.score) || 0)), ad: !!x.ad }));
+}
+async function aiSummarize(env, item) {
+  const prompt = '请为下面这篇帖子写中文摘要和一句话点评。\n'
+    + '要求：\n'
+    + '- summary：100-200 字，客观概括原文核心信息，忠实原文，不编造原文没有的事实、数字或结论，不用营销语气；\n'
+    + '- comment：一句话点评，40 字以内，指出这篇对 VPS / 服务器 / Linux / 建站 / AI 工具爱好者的价值或看点，语气克制平实。\n'
+    + '只输出 JSON：{"summary": "...", "comment": "..."}，不要输出其他文字。\n\n'
+    + '标题：' + item.title + '\n来源：' + item.sourceLabel + '\n正文：\n' + (item.text || item.title);
+  const parsed = aiParseJson(await aiChat(env, [{ role: 'user', content: prompt }], 1500));
+  if (!parsed) return null;
+  const summary = aiClean(parsed.summary, 420);
+  const comment = aiClean(parsed.comment, 90);
+  if (summary.length < 50) return null;
+  return { summary, comment };
+}
+
+/* ---------- 发帖 ---------- */
+async function aiEnsureBoard(env) {
+  const b = await env.DB.prepare("SELECT id FROM boards WHERE name LIKE '%每日精选%' ORDER BY id LIMIT 1").first();
+  if (b) return b.id;
+  const r = await env.DB.prepare('INSERT INTO boards (name, descr, sort) VALUES (?,?,?)')
+    .bind(AI_BOARD_NAME, '精选君每日自动精选：VPS / 服务器 / 建站 / Linux / AI 工具优质帖（附摘要与原文链接）', 5).run();
+  return r.meta.last_row_id;
+}
+async function aiEnsureBot(env) {
+  const u = await env.DB.prepare('SELECT id FROM users WHERE name=?').bind(AI_BOT_NAME).first();
+  if (u) return u.id;
+  const r = await env.DB.prepare(
+    'INSERT INTO users (name, pass_hash, salt, is_admin, email, verified, bio, created_at, points) VALUES (?,?,?,?,?,?,?,?,?)'
+  ).bind(AI_BOT_NAME, 'oauth$', '', 0, '', 1,
+    '官方精选机器人 🤖 每日从 V2EX / NodeSeek / linux.do 精选优质帖，AI 生成摘要并附原文链接。',
+    Date.now(), 0).run();
+  return r.meta.last_row_id;
+}
+async function aiPostThread(env, boardId, botId, item, sum) {
+  const now = Date.now();
+  const title = ('[' + item.sourceLabel + '] ' + item.title).slice(0, 100);
+  const lines = [];
+  lines.push('🤖 AI 自动精选 · 来源：' + item.sourceLabel + (item.extra ? '（' + item.extra + '）' : '') + (item.author ? ' · 原作者：' + item.author : ''));
+  lines.push('');
+  lines.push('**📝 摘要**');
+  lines.push(sum.summary);
+  if (sum.comment) {
+    lines.push('');
+    lines.push('**💡 点评**');
+    lines.push(sum.comment);
+  }
+  lines.push('');
+  lines.push('**🔗 原文**');
+  lines.push(item.url);
+  lines.push('');
+  lines.push('（本帖由系统自动精选，摘要由 AI 生成，内容以原文为准）');
+  const content = lines.join('\n');
+  const r = await env.DB.prepare(
+    'INSERT INTO threads (board_id, user_id, title, created_at, updated_at) VALUES (?,?,?,?,?)'
+  ).bind(boardId, botId, title, now, now).run();
+  const tid = r.meta.last_row_id;
+  await env.DB.prepare('INSERT INTO posts (thread_id, user_id, content, created_at) VALUES (?,?,?,?)')
+    .bind(tid, botId, content, now).run();
+  await env.DB.prepare('INSERT INTO threads_fts (title, content, thread_id) VALUES (?,?,?)')
+    .bind(title, content.slice(0, 500), tid).run().catch(() => {});
+  return tid;
+}
+
+/* ---------- 主管线 ---------- */
+async function runAiDigest(env, opts) {
+  opts = opts || {};
+  const out = { fetched: 0, fresh: 0, scored: 0, passed: 0, posted: 0, postIds: [], errors: [] };
+  try {
+    if (!env.AI_API_KEY) { out.errors.push('AI_API_KEY 未配置'); return out; }
+    const enabled = await getSetting(env, 'ai_digest_enabled', '1');
+    if (enabled === '0' && !opts.force) { out.skipped = 'disabled'; return out; }
+    // 每日限额（北京时间自然日）
+    const now = Date.now();
+    const bj = new Date(now + 8 * 3600 * 1000);
+    const dayStart = Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate()) - 8 * 3600 * 1000;
+    const dc = await env.DB.prepare("SELECT COUNT(*) AS n FROM ai_ingest WHERE status='posted' AND created_at>=?")
+      .bind(dayStart).first().catch(() => ({ n: 0 }));
+    const quota = Math.min(AI_DIGEST_CFG.PER_RUN, AI_DIGEST_CFG.PER_DAY - (dc ? dc.n : 0));
+    if (quota <= 0) { out.skipped = 'daily-quota'; return out; }
+    // 抓取三源（单源失败不影响其他源）
+    let items = [];
+    for (const f of [aiFetchV2ex, aiFetchNodeSeek, aiFetchLinuxDo]) {
+      try { items = items.concat(await f()); }
+      catch (e) { out.errors.push('fetch: ' + e.message); }
+    }
+    out.fetched = items.length;
+    // URL 去重：过滤已入库的
+    const fresh = [];
+    const seenUrl = new Set();
+    for (const it of items) {
+      if (!it.url || !it.title || seenUrl.has(it.url)) continue;
+      seenUrl.add(it.url);
+      const ex = await env.DB.prepare('SELECT id FROM ai_ingest WHERE source_url=?').bind(it.url).first().catch(() => null);
+      if (!ex) fresh.push(it);
+    }
+    out.fresh = fresh.length;
+    if (!fresh.length) return out;
+    // AI 打分（每批 25 条）
+    const scored = [];
+    for (let i = 0; i < fresh.length; i += 25) {
+      const batch = fresh.slice(i, i + 25);
+      try {
+        const res = await aiScoreBatch(env, batch);
+        for (const s of res) scored.push({ it: batch[s.i], score: s.score, ad: s.ad });
+      } catch (e) { out.errors.push('score: ' + e.message); }
+    }
+    out.scored = scored.length;
+    const passed = scored.filter(s => !s.ad && s.score >= AI_DIGEST_CFG.MIN_SCORE)
+      .sort((a, b) => b.score - a.score);
+    out.passed = passed.length;
+    const passedUrls = new Set(passed.map(s => s.it.url));
+    // 未入选的先落库标记 skipped，避免下轮重复打分
+    for (const s of scored) {
+      if (passedUrls.has(s.it.url)) continue;
+      await env.DB.prepare('INSERT OR IGNORE INTO ai_ingest (source, source_url, title, score, status, created_at) VALUES (?,?,?,?,?,?)')
+        .bind(s.it.source, s.it.url, s.it.title.slice(0, 200), s.score, 'skipped', now).run().catch(() => {});
+    }
+    if (!passed.length) return out;
+    const boardId = await aiEnsureBoard(env);
+    const botId = await aiEnsureBot(env);
+    for (const s of passed) {
+      if (out.posted >= quota) break;
+      const it = s.it;
+      try {
+        if (it.source === 'linuxdo' && (!it.text || it.text.length < 200)) {
+          const full = await aiFetchLinuxDoFull(it).catch(() => '');
+          if (full) it.text = full;
+        }
+        const sum = await aiSummarize(env, it);
+        if (!sum) throw new Error('摘要生成失败或过短');
+        const bad = await checkSensitive(env, it.title + '\n' + sum.summary + '\n' + sum.comment);
+        if (bad) throw new Error('命中敏感词');
+        const tid = await aiPostThread(env, boardId, botId, it, sum);
+        await env.DB.prepare('INSERT OR IGNORE INTO ai_ingest (source, source_url, title, score, status, post_id, created_at) VALUES (?,?,?,?,?,?,?)')
+          .bind(it.source, it.url, it.title.slice(0, 200), s.score, 'posted', tid, Date.now()).run();
+        out.posted++;
+        out.postIds.push(tid);
+      } catch (e) {
+        out.errors.push('post ' + it.url + ': ' + e.message);
+        await env.DB.prepare('INSERT OR IGNORE INTO ai_ingest (source, source_url, title, score, status, created_at) VALUES (?,?,?,?,?,?)')
+          .bind(it.source, it.url, it.title.slice(0, 200), s.score, 'failed', Date.now()).run().catch(() => {});
+      }
+    }
+    return out;
+  } catch (e) {
+    out.errors.push('fatal: ' + (e && e.message));
+    return out;
+  }
+}
+
 export default {
   async fetch(req, env) {
     const url = new URL(req.url);
@@ -677,7 +986,17 @@ export default {
         const r = await env.DB.prepare(
           'INSERT INTO user_items (user_id, item_id, extra, created_at) VALUES (?,?,?,?)'
         ).bind(me.id, itemId, extra, now).run();
-        return json({ ok: true, user_item_id: r.meta.last_row_id, code: extra });
+        const userItemId = r.meta.last_row_id;
+        // 视频链接商品：生成观看 token（30 天有效）
+        let watchToken = null;
+        if (item.item_type === 'video_link') {
+          watchToken = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+          const expiresAt = now + 30 * 24 * 3600 * 1000;
+          await env.DB.prepare(
+            'INSERT INTO video_tokens (token, user_id, item_id, user_item_id, expires_at, created_at) VALUES (?,?,?,?,?,?)'
+          ).bind(watchToken, me.id, itemId, userItemId, expiresAt, now).run();
+        }
+        return json({ ok: true, user_item_id: userItemId, code: extra, watch_token: watchToken });
       }
       // GET /api/shop/my-items 我的物品
       if (seg[0] === 'shop' && seg[1] === 'my-items' && method === 'GET') {
@@ -686,7 +1005,33 @@ export default {
           `SELECT ui.*, si.name, si.descr, si.icon, si.item_type, si.params FROM user_items ui
            JOIN shop_items si ON si.id=ui.item_id WHERE ui.user_id=? ORDER BY ui.created_at DESC`
         ).bind(me.id).all().catch(() => ({ results: [] }));
+        // 视频类商品附带观看 token
+        for (const it of results) {
+          if (it.item_type === 'video_link') {
+            const vt = await env.DB.prepare('SELECT token, expires_at FROM video_tokens WHERE user_item_id=?').bind(it.id).first().catch(()=>null);
+            if (vt) { it.watch_token = vt.token; it.watch_expires = vt.expires_at; }
+          }
+        }
         return json({ items: results });
+      }
+      // GET /api/watch/:token 获取视频播放地址（token 鉴权）
+      if (seg[0] === 'watch' && seg[1] && method === 'GET') {
+        const token = seg[1];
+        const vt = await env.DB.prepare('SELECT * FROM video_tokens WHERE token=?').bind(token).first();
+        if (!vt) return json({ error: '链接无效或已失效' }, 404);
+        if (vt.expires_at < Date.now()) return json({ error: '链接已过期' }, 410);
+        const item = await env.DB.prepare('SELECT params, name FROM shop_items WHERE id=?').bind(vt.item_id).first();
+        if (!item) return json({ error: '商品不存在' }, 404);
+        let params = {};
+        try { params = JSON.parse(item.params || '{}'); } catch(e){}
+        // 兼容旧数据：url 单个 / urls 数组
+        let urls = [];
+        if (Array.isArray(params.urls)) urls = params.urls.filter(u => /^https?:\/\//.test(u));
+        else if (params.url && /^https?:\/\//.test(params.url)) urls = [params.url];
+        if (!urls.length) return json({ error: '视频地址未配置' }, 500);
+        // 增加播放计数
+        await env.DB.prepare('UPDATE video_tokens SET view_count = view_count + 1 WHERE token=?').bind(token).run().catch(()=>{});
+        return json({ ok: true, urls, name: item.name, expires_at: vt.expires_at });
       }
       // POST /api/shop/use 使用道具 {user_item_id, extra?, thread_id?}
       if (seg[0] === 'shop' && seg[1] === 'use' && method === 'POST') {
@@ -862,7 +1207,15 @@ export default {
         const deny = requireAdmin(me); if (deny) return deny;
         const { name, descr, price, icon, item_type, sort, params, codes, usage } = body;
         if (!name || !price || !item_type) return json({ error: '名称、价格、类型必填' }, 400);
-        if (!['pin_card', 'rename_card', 'avatar_frame', 'custom_title', 'card'].includes(item_type)) return json({ error: '类型无效' }, 400);
+        if (!['pin_card', 'rename_card', 'avatar_frame', 'custom_title', 'card', 'video_link'].includes(item_type)) return json({ error: '类型无效' }, 400);
+        // video_link 类型必须填视频地址（支持多个，每行一个）
+        if (item_type === 'video_link') {
+          const p = params || {};
+          const urls = Array.isArray(p.urls) ? p.urls.filter(u => /^https?:\/\//.test(u)) : (p.url && /^https?:\/\//.test(p.url) ? [p.url] : []);
+          if (!urls.length) return json({ error: '视频类型必须填写至少一个有效的视频地址' }, 400);
+          params.urls = urls;
+          delete params.url; // 统一用 urls 数组
+        }
         const paramsStr = JSON.stringify(params || {});
         const r = await env.DB.prepare(
           'INSERT INTO shop_items (name, descr, usage, price, icon, item_type, sort, params, created_at) VALUES (?,?,?,?,?,?,?,?,?)'
@@ -1563,7 +1916,7 @@ export default {
       }
       if (seg[0] === 'admin' && seg[1] === 'settings' && method === 'PUT') {
         const deny = requireAdmin(me); if (deny) return deny;
-        const allowed = ['site_name', 'site_logo', 'site_desc', 'announcement'];
+        const allowed = ['site_name', 'site_logo', 'site_desc', 'announcement', 'ai_digest_enabled'];
         const batch = [];
         for (const k of allowed) {
           if (body[k] !== undefined) {
@@ -1573,6 +1926,27 @@ export default {
         }
         if (batch.length) await env.DB.batch(batch);
         return json({ ok: true });
+      }
+
+      // ---------- AI 每日精选（管理） ----------
+      // POST /api/admin/ai-digest/run 手动触发一轮（force：忽略总开关，每日限额仍生效）
+      if (seg[0] === 'admin' && seg[1] === 'ai-digest' && seg[2] === 'run' && method === 'POST') {
+        const deny = requireAdmin(me); if (deny) return deny;
+        const r = await runAiDigest(env, { force: true });
+        await adminLog(env, me, '手动触发 AI 精选', 'ai_digest', null, '发帖 ' + (r.posted || 0) + ' 篇');
+        return json({ ok: true, ...r });
+      }
+      // GET /api/admin/ai-digest/status 开关状态 + 最近抓取记录 + 状态统计
+      if (seg[0] === 'admin' && seg[1] === 'ai-digest' && seg[2] === 'status' && method === 'GET') {
+        const deny = requireAdmin(me); if (deny) return deny;
+        const { results: recent } = await env.DB.prepare(
+          'SELECT id, source, source_url, title, score, status, post_id, created_at FROM ai_ingest ORDER BY id DESC LIMIT 20'
+        ).all().catch(() => ({ results: [] }));
+        const { results: counts } = await env.DB.prepare(
+          'SELECT status, COUNT(*) AS n FROM ai_ingest GROUP BY status'
+        ).all().catch(() => ({ results: [] }));
+        const en = await getSetting(env, 'ai_digest_enabled', '1');
+        return json({ enabled: en !== '0', recent, counts });
       }
 
       // ---------- 私信 ----------
@@ -1848,5 +2222,14 @@ export default {
     } catch (e) {
       return json({ error: '服务器错误' }, 500);
     }
+  },
+
+  // Cron 定时触发（每 6 小时）：AI 每日精选管线，失败只记日志不影响论坛
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(
+      runAiDigest(env)
+        .then(r => console.log('[ai-digest] ' + JSON.stringify(r)))
+        .catch(e => console.log('[ai-digest] fatal: ' + (e && e.message)))
+    );
   },
 };
