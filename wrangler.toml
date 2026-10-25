@@ -13,3 +13,7 @@ migrations_dir = "migrations"
 [vars]
 TURNSTILE_SITE_KEY = ""
 FROM_EMAIL = "noreply@example.com"
+
+# AI 每日精选定时任务（每 6 小时一轮；还需把 AI_API_KEY 设为 Worker Secret）
+[triggers]
+crons = ["23 */6 * * *"]
