@@ -1,5 +1,14 @@
 # 更新日志
 
+## 2026-10-25
+
+### AI 每日精选
+- 新增「📰 每日精选」版块与官方机器人账号「精选君」
+- Worker Cron 每 6 小时自动抓取 V2EX / NodeSeek / linux.do 公开订阅源，按原文 URL 去重（新表 ai_ingest，迁移 025）
+- AI 打分筛选：与社区定位对口的才留，纯广告 / 商家推广 / affiliate / 个人交易强降权；入选帖由 AI 生成 100–200 字摘要 + 一句话点评，只发摘要 + 点评 + 原文链接，不搬运全文
+- 限额：每轮最多 2 篇、每天最多 6 篇；总开关 `settings.ai_digest_enabled`（后台站点设置可改），管理员可通过 `POST /api/admin/ai-digest/run` 手动触发、`GET /api/admin/ai-digest/status` 查看状态
+- 需配置 Worker Secrets：`AI_API_KEY`（必填）、`AI_API_BASE`、`AI_MODEL`
+
 ## 2026-10-17
 
 ### 视觉统一
