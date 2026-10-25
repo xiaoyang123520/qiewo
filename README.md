@@ -45,6 +45,7 @@
 - 🤖 应用层 botguard（AI 爬虫 / 扫描器自动 403）+ 安全响应头
 
 **社区玩法**
+- 🤖 AI 每日精选：Cron 定时抓取 V2EX / NodeSeek / linux.do 公开订阅源，AI 打分筛选 + 生成摘要点评，官方机器人「精选君」自动发帖（只发摘要 + 原文链接，不搬全文；每轮 ≤2 篇、每天 ≤6 篇，可在后台关闭）
 - 📅 每日签到积分（北京时间，连续签到有加成）
 - 🏆 排行榜（积分 / 发帖 / 回帖 / 活跃 × 总榜 / 月榜 / 周榜）
 - 🛒 积分商城：置顶卡、改名卡、头像框、自定义头衔、卡密商品（后台可自助上架）
@@ -68,6 +69,9 @@
 |------|------|------|
 | `RESEND_API_KEY` | Resend API Key，用于发送验证邮件 | 建议 |
 | `TURNSTILE_SECRET` | Turnstile Secret Key，用于人机验证 | 建议 |
+| `AI_API_KEY` | OpenAI 兼容接口的 API Key，用于 AI 每日精选 | 可选 |
+| `AI_API_BASE` | AI 接口地址（默认 `https://api.openai.com/v1`） | 可选 |
+| `AI_MODEL` | AI 模型名（默认 `gpt-4o-mini`，建议用便宜快的模型） | 可选 |
 
 设置路径：Workers → cf-forum → 设置 → 变量和机密。
 
